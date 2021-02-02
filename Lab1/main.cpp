@@ -9,25 +9,22 @@ class Matrix {
 
 private:
 	double** matrix;
-	size_t height;
-	size_t width;
-
+	int height;
+	int width;
 
 public:
 
-	Matrix(size_t height, size_t width) : height(height), width(width) {
-
-		srand((unsigned)time(NULL));
+	Matrix(int height, int width) : height(height), width(width) {
 
 		this->matrix = new double* [this->height];
 		for (int i = 0; i < this->height; i++) {
 			this->matrix[i] = new double[this->width];
-			ZeroMemory(this->matrix[i], this->width * sizeof(double));			
+			ZeroMemory(this->matrix[i], this->width * sizeof(double));
 		}
 	}
 
-	Matrix(const Matrix& obj) : height(obj.height), width(obj.width){
-	
+	Matrix(const Matrix& obj) : height(obj.height), width(obj.width) {
+
 		this->matrix = new double* [this->height];
 		for (int i = 0; i < this->height; i++) {
 			this->matrix[i] = new double[this->width];
@@ -47,16 +44,16 @@ public:
 		srand((unsigned)time(NULL));
 		for (int i = 0; i < this->height; i++)
 			for (int j = 0; j < this->width; j++)
-				this->matrix[i][j] = rand() % 5;
+				this->matrix[i][j] = rand() % 100;
 	}
 
-	double* operator [](size_t index) { return this->matrix[index]; }
+	double* operator [](int index) { return this->matrix[index]; }
 
 	friend std::ostream& operator<<(std::ostream& outStream, const Matrix& obj) {
-	
+
 		for (int i = 0; i < obj.height; i++) {
 			for (int j = 0; j < obj.width; j++)
-				outStream << setw(1) << obj.matrix[i][j] << " ";
+				outStream << setw(2) << obj.matrix[i][j] << " ";
 			outStream << endl;
 		}
 
@@ -69,7 +66,7 @@ public:
 			return FALSE;
 
 		for (int i = 0; i < this->height; i++)
-			if(memcmp(this->matrix[i], obj.matrix[i], this->width * sizeof(double)))
+			if (memcmp(this->matrix[i], obj.matrix[i], this->width * sizeof(double)))
 				return FALSE;
 
 		return TRUE;
@@ -77,19 +74,21 @@ public:
 
 	Matrix operator * (const Matrix& obj) {
 
-		Matrix result(this->height, obj.width);
+		int resultWidth = obj.width;
+
+		Matrix result(this->height, resultWidth);
 		DWORD startTime = GetTickCount();
 
-		for (int i = 0; i < this->height; i++){
+		for (int i = 0; i < this->height; i++) {
 
 			double* resultRow = result[i];
 
-			for (int k = 0; k < this->width; k++){
+			for (int k = 0; k < this->width; k++) {
 
 				const double* objRow = obj.matrix[k];
 				double thisElem = this->matrix[i][k];
 
-				for (int j = 0; j < obj.width; ++j)
+				for (int j = 0; j < resultWidth; j++)
 					resultRow[j] += thisElem * objRow[j];
 			}
 		}
@@ -99,7 +98,9 @@ public:
 		return result;
 	}
 
-	Matrix vecMul(const Matrix& obj) const {
+	Matrix noVecMul (const Matrix& obj) {
+
+		int resultWidth = obj.width;
 
 		Matrix result(this->height, obj.width);
 		DWORD startTime = GetTickCount();
@@ -113,8 +114,33 @@ public:
 				const double* objRow = obj.matrix[k];
 				double thisElem = this->matrix[i][k];
 
+#pragma loop(no_vector)
+				for (int j = 0; j < resultWidth; j++)
+					resultRow[j] += thisElem * objRow[j];
+			}
+		}
+
+		cout << setw(9) << "no vec : " << GetTickCount() - startTime << " milliseconds" << endl;
+
+		return result;
+	}
+
+	Matrix sseMul(const Matrix& obj) const {
+
+		Matrix result(this->height, obj.width);
+		DWORD startTime = GetTickCount();
+
+		for (int i = 0; i < this->height; i++) {
+
+			double* resultRow = result[i];
+
+			for (int k = 0; k < this->width; k++) {
+
+				const double* objRow = obj.matrix[k];
+				__m128d thisElem = _mm_load_pd1(this->matrix[i] + k);
+
 				for (int j = 0; j < obj.width; j += 2)
-					_mm_storeu_pd(resultRow + j, _mm_add_pd(_mm_loadu_pd(resultRow + j), _mm_mul_pd(_mm_load_pd1(&thisElem), _mm_loadu_pd(objRow + j))));
+					_mm_storeu_pd(resultRow + j, _mm_add_pd(_mm_loadu_pd(resultRow + j), _mm_mul_pd(thisElem, _mm_loadu_pd(objRow + j))));
 			}
 		}
 
@@ -124,7 +150,6 @@ public:
 	}
 
 };
-
 
 #define SIZE_AMP 250
 
@@ -136,8 +161,12 @@ int main() {
 	a.fill();
 	b.fill();
 
-	if (a * b == a.vecMul(b))
-		cout << "All good";
+	Matrix c = a * b;
+	Matrix d = a.sseMul(b);
+	Matrix e = a.noVecMul(b);
+
+	if (c == d && d == e)
+		cout << "Eq";
 	else
 		cout << "Fail";
 
