@@ -40,11 +40,9 @@ public:
 	}
 
 	void fill() {
-
-		srand((unsigned)time(NULL));
 		for (int i = 0; i < this->height; i++)
 			for (int j = 0; j < this->width; j++)
-				this->matrix[i][j] = rand() % 100;
+				this->matrix[i][j] = rand() % 5;
 	}
 
 	double* operator [](int index) { return this->matrix[index]; }
@@ -53,7 +51,7 @@ public:
 
 		for (int i = 0; i < obj.height; i++) {
 			for (int j = 0; j < obj.width; j++)
-				outStream << setw(2) << obj.matrix[i][j] << " ";
+				outStream << setw(3) << obj.matrix[i][j] << " ";
 			outStream << endl;
 		}
 
@@ -149,11 +147,52 @@ public:
 		return result;
 	}
 
+	Matrix cacheOptMul(const Matrix& obj) const {
+	
+		int width = obj.width, height = this->height, eq = this->width;
+
+		Matrix result(height, width);
+		DWORD startTime = GetTickCount();
+
+		for (int resHeightOffset = 0; resHeightOffset < height; resHeightOffset +=4 ) {
+
+			for (int innerOffset = 0; innerOffset < eq; innerOffset += 8) {
+
+				for (int resWidthOffset = 0; resWidthOffset < width; resWidthOffset += 8) {
+
+							//Micro core
+							for (int i = 0; i < 4; i++) {
+
+								double* resultRow = result[i + resHeightOffset] + resWidthOffset;
+								for (int k = 0; k < 8; k++) {
+
+									const double* objRow = obj.matrix[k + innerOffset] + resWidthOffset;
+									__m128d thisElem = _mm_load_pd1(this->matrix[i + resHeightOffset] + k + innerOffset);
+
+									_mm_storeu_pd(resultRow    , _mm_add_pd(_mm_loadu_pd(resultRow    ), _mm_mul_pd(thisElem, _mm_loadu_pd(objRow    ))));
+									_mm_storeu_pd(resultRow + 2, _mm_add_pd(_mm_loadu_pd(resultRow + 2), _mm_mul_pd(thisElem, _mm_loadu_pd(objRow + 2))));
+									_mm_storeu_pd(resultRow + 4, _mm_add_pd(_mm_loadu_pd(resultRow + 4), _mm_mul_pd(thisElem, _mm_loadu_pd(objRow + 4))));
+									_mm_storeu_pd(resultRow + 6, _mm_add_pd(_mm_loadu_pd(resultRow + 6), _mm_mul_pd(thisElem, _mm_loadu_pd(objRow + 6))));
+
+									/*for (int j = 0; j < 8; j += 2)
+										_mm_storeu_pd(resultRow + j, _mm_add_pd(_mm_loadu_pd(resultRow + j), _mm_mul_pd(thisElem, _mm_loadu_pd(objRow + j))));*/
+								}
+							}
+				}
+			}
+		}
+
+		cout << " cache : " << GetTickCount() - startTime << " milliseconds" << endl;
+		return result;
+	}
+
 };
 
-#define SIZE_AMP 250
+#define SIZE_AMP 500
 
 int main() {
+
+	srand((unsigned)time(NULL));
 
 	Matrix a(SIZE_AMP * 4, SIZE_AMP * 8);
 	Matrix b(SIZE_AMP * 8, SIZE_AMP * 8);
@@ -161,14 +200,15 @@ int main() {
 	a.fill();
 	b.fill();
 
-	Matrix c = a * b;
+	//Matrix c = a * b;
+	//Matrix e = a.noVecMul(b);
+	Matrix x = a.cacheOptMul(b);
 	Matrix d = a.sseMul(b);
-	Matrix e = a.noVecMul(b);
 
-	if (c == d && d == e)
-		cout << "Eq";
+	if (x == d)
+		cout << "Ok";
 	else
-		cout << "Fail";
+		cout << "Not OK";
 
 	return 0;
 }
