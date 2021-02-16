@@ -1,17 +1,19 @@
 #include <windows.h>
 #include <iostream>
+#include <iomanip>
+#include <intrin.h>
+
+#pragma intrinsic(__rdtsc)
 
 using namespace std;
 
 #define B 8
 #define KB 1024 * B
 #define MB 1024 * KB
-#define MAX_ASSOCIATION 20
-#define L1_SIZE 32 * KB / sizeof(ull)
-#define L2_SIZE 265 * KB / sizeof(ull)
-#define L3_SIZE 6 * MB / sizeof(ull)
+#define CACHE_SIZE 6 * MB / sizeof(ull)
 #define OFFSET 4 * MB / sizeof(ull)
-#define TRIES 200
+#define MAX_ASSOCIATION 20
+#define TRIES 100
 
 typedef unsigned long long int ull;
 
@@ -35,18 +37,23 @@ public:
 
 	friend ostream& operator <<(ostream& stream, const TestArray& obj) {
 	
-		for (int i = 0; i < OFFSET * MAX_ASSOCIATION; i++)
-			stream << obj.array[i] << " ";
+		size_t i = 0;
+
+		do{
+
+			stream << obj.array[i] << " "; 
+			i = obj.array[i];
+		} while (i);
 	
 		return stream;
-	}
+	} 
 
 	void init(size_t size, int assoc) {
 
-		ZeroMemory(array, OFFSET * MAX_ASSOCIATION);
-
-		if (size > L3_SIZE || assoc < 1 || assoc > MAX_ASSOCIATION)
+		if (size > CACHE_SIZE || assoc < 1 || assoc > MAX_ASSOCIATION)
 			exit(1);
+
+		ZeroMemory(array, OFFSET * MAX_ASSOCIATION);
 
 		if (assoc == 1) {
 
@@ -57,21 +64,19 @@ public:
 			return;
 		}
 
-		ull blockSize = size % assoc == 0 ? size / assoc : size / assoc + 1;
-		ull block = blockSize;
-		ull poz = 0, num = OFFSET;
-		for (int i = 0; i < assoc - 1; i++)
-		{
-			for (int j = 0; j < blockSize; j++)
-				array[poz++] = num++;
-			poz += OFFSET - blockSize;
-			num += OFFSET - blockSize;
-			if (i + 1 == size % assoc) array[poz - blockSize--] = 0;
+		size_t blockSize = size % assoc == 0 ? size / assoc : size / assoc + 1;
+		size_t currentOffset = 0;
+
+		for (size_t i = 0; i < assoc - 1; i++) {
+
+			for (size_t j = 0; j < blockSize; j++)
+				array[currentOffset + j] = currentOffset + OFFSET + j;
+
+			currentOffset += OFFSET;
 		}
-		num = 1;
-		for (int j = 0; j < blockSize; j++)
-			array[poz++] = num++;
-		if (size % assoc == 0) array[poz - 1] = 0;
+
+		for (size_t j = 0; j < blockSize; j++)
+			array[currentOffset + j] = j + 1;
 	}
 
 	DWORD testRead() {
@@ -83,7 +88,7 @@ public:
 
 			do {
 				index = this->array[index];
-			} while (index != 0);
+			} while (index);
 		}
 
 		return (GetTickCount() - startTime) / TRIES;
@@ -96,14 +101,13 @@ int main() {
 
 	TestArray array;
 
-	/*array.init(10, 2);
-
+	/*array.init(CACHE_SIZE, 20);
 	cout << array;*/
 
 	for (int i = 1; i <= MAX_ASSOCIATION; i++) {
 		
-		array.init(L1_SIZE, i);
-		cout << i << " : " << array.testRead() << endl;
+		array.init(CACHE_SIZE, i);
+		cout << setw(2) << i << " : " << setw(3) << array.testRead() << " ms" << endl;
 	
 	}
 
