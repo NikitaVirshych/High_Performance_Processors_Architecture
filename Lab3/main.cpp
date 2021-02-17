@@ -5,10 +5,7 @@
 
 #pragma intrinsic(__rdtsc)
 
-using namespace std;
-
-#define B 8
-#define KB 1024 * B
+#define KB 1024
 #define MB 1024 * KB
 #define CACHE_SIZE 6 * MB / sizeof(ull)
 #define OFFSET 4 * MB / sizeof(ull)
@@ -16,6 +13,8 @@ using namespace std;
 #define TRIES 100
 
 typedef unsigned long long int ull;
+
+using namespace std;
 
 class TestArray {
 
@@ -38,9 +37,7 @@ public:
 	friend ostream& operator <<(ostream& stream, const TestArray& obj) {
 	
 		size_t i = 0;
-
 		do{
-
 			stream << obj.array[i] << " "; 
 			i = obj.array[i];
 		} while (i);
@@ -48,10 +45,8 @@ public:
 		return stream;
 	} 
 
+	//Формирование нужной структуры памяти
 	void init(size_t size, int assoc) {
-
-		if (size > CACHE_SIZE || assoc < 1 || assoc > MAX_ASSOCIATION)
-			exit(1);
 
 		ZeroMemory(array, OFFSET * MAX_ASSOCIATION);
 
@@ -75,14 +70,15 @@ public:
 			currentOffset += OFFSET;
 		}
 
-		for (size_t j = 0; j < blockSize; j++)
-			array[currentOffset + j] = j + 1;
+		for (size_t i = 0; i < blockSize; i++)
+			array[currentOffset + i] = i + 1;
 	}
 
-	DWORD testRead() {
+	//Замер числа тактов TRIES обходов
+	ull testRead() {
 
 		ull index = 0;
-		DWORD startTime = GetTickCount();
+		ull startTicks = __rdtsc();
 
 		for (int i = 0; i < TRIES; i++) {
 
@@ -91,7 +87,7 @@ public:
 			} while (index);
 		}
 
-		return (GetTickCount() - startTime) / TRIES;
+		return (__rdtsc() - startTicks)/TRIES;
 	}
 
 
@@ -101,14 +97,10 @@ int main() {
 
 	TestArray array;
 
-	/*array.init(CACHE_SIZE, 20);
-	cout << array;*/
-
 	for (int i = 1; i <= MAX_ASSOCIATION; i++) {
 		
 		array.init(CACHE_SIZE, i);
-		cout << setw(2) << i << " : " << setw(3) << array.testRead() << " ms" << endl;
-	
+		cout << setw(2) << i << " : " << setw(8) << array.testRead() << " ticks" << endl;
 	}
 
 	return 0;
