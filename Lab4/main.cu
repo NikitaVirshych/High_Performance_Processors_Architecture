@@ -1,15 +1,40 @@
+﻿
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+#include <stdio.h>
 #include <windows.h>
 #include <iostream>
 #include <cuda.h>
 #include <curand.h>
 
-#define CUDA_CALL(x) do { if((x)!=cudaSuccess) { \
-    printf("Error at %s:%d\n",__FILE__,__LINE__);\
-    return EXIT_FAILURE;}} while(0)
+__global__ void transform(char* data, char* result) {
 
-#define CURAND_CALL(x) do { if((x)!=CURAND_STATUS_SUCCESS) { \
-    printf("Error at %s:%d\n",__FILE__,__LINE__);\
-    return EXIT_FAILURE;}} while(0)
+	char* window = data + (blockIdx.x * blockDim.x + threadIdx.x) * 4;
+	char* rWindow = result + blockIdx.x * blockDim.x * 4 + threadIdx.x;
+
+	rWindow[0] = window[2];
+	rWindow[blockDim.x] = window[1];
+	rWindow[blockDim.x * 2] = window[3];
+	rWindow[blockDim.x * 3] = window[0];
+
+
+}
+
+inline
+cudaError_t CUDA_CALL(cudaError_t result)
+{
+	if (result != cudaSuccess)
+		std::cerr << "CUDA Runtime Error: " << cudaGetErrorString(result) << std::endl;
+	return result;
+}
+inline
+curandStatus_t CURAND_CALL(curandStatus_t result)
+{
+	if (result != CURAND_STATUS_SUCCESS)
+		std::cerr << "CUDA Runtime Error: " << std::endl;
+	return result;
+}
 
 using namespace std;
 
@@ -25,14 +50,14 @@ public:
 
 	class sizeEx {};
 
-	Matrix(int height, int width) : height(height), width(width), fullSize(height*width){
+	Matrix(int height, int width) : height(height), width(width), fullSize(height* width) {
 
-		this->data = new char [fullSize];
+		this->data = new char[fullSize];
 		ZeroMemory(this->data, fullSize);
-		
+
 	}
 
-	Matrix(const Matrix& obj) : height(obj.height), width(obj.width), fullSize(obj.fullSize){
+	Matrix(const Matrix& obj) : height(obj.height), width(obj.width), fullSize(obj.fullSize) {
 
 		this->data = new char[fullSize];
 		memcpy(this->data, obj.data, fullSize);
@@ -45,27 +70,27 @@ public:
 
 	void fill() {
 		for (int i = 0; i < fullSize; i++)
-				this->data[i] = '0' + rand() % 10;
+			this->data[i] = '0' + rand() % 10;
 	}
-
+	
 	void cudaFill() {
-		
+
 		curandGenerator_t gen;
 		char* devData;
 
 		CUDA_CALL(cudaMalloc(&devData, this->fullSize));
 
-		CURAND_CALL(curandCreateGenerator(&gen,CURAND_RNG_PSEUDO_DEFAULT));
+		CURAND_CALL(curandCreateGenerator(&gen, CURAND_RNG_PSEUDO_DEFAULT));
 		CURAND_CALL(curandSetPseudoRandomGeneratorSeed(gen, 1234ULL));
 
-		CURAND_CALL(curandGenerate(gen, devData, this->fullSize/sizeof(unsigned int)));
+		CURAND_CALL(curandGenerate(gen, (unsigned int*)devData, this->fullSize / sizeof(unsigned int)));
 
 		CUDA_CALL(cudaMemcpy(this->data, devData, this->fullSize, cudaMemcpyDeviceToHost));
 		CURAND_CALL(curandDestroyGenerator(gen));
 
 		CUDA_CALL(cudaFree(devData));
 	}
-
+	
 	friend std::ostream& operator<<(std::ostream& outStream, const Matrix& obj) {
 
 		for (int i = 0; i < obj.height; i++) {
@@ -90,29 +115,29 @@ public:
 	}
 
 	Matrix cpuTransform() const {
-	
+
 		if (this->width % 4)
 			throw sizeEx();
 
 		Matrix result(this->height * 4, this->width / 4);
-		const int order[] = {2, 1, 3, 0};
+		const int order[] = { 2, 1, 3, 0 };
 
-		DWORD startTime = GetTickCount();
+		DWORD64 startTime = GetTickCount64();
 
 		for (int h = 0; h < this->height; h++) {
-		
+
 			for (int i = 0; i < 4; i++) {
-			
+
 				int tmp = order[i];
 				for (int j = 0; j < result.width; j++) {
-					result.data[(i + h * 4)*result.width + j] = this->data[h * this->width + tmp + j * 4];
+					result.data[(i + h * 4) * result.width + j] = this->data[h * this->width + tmp + j * 4];
 				}
 			}
-		
+
 		}
 
-		cout << "CPU  transform elapsed time: " << GetTickCount() - startTime << " ms";
-		
+		cout << "CPU  transform elapsed time: " << GetTickCount64() - startTime << " ms" << endl;
+
 		return result;
 	}
 
@@ -129,30 +154,30 @@ public:
 		CUDA_CALL(cudaMalloc(&dev_data, this->fullSize));
 		CUDA_CALL(cudaMalloc(&dev_result, result.fullSize));
 
-		dim3 threadsPerBlock = dim3(result.width / 4);
-		dim3 blocksPerGrid = dim3(result.height);
+		dim3 threadsPerBlock = dim3(result.width);
+		dim3 blocksPerGrid = dim3(this->height);
 
 		cudaEvent_t start, stop;
 		CUDA_CALL(cudaEventCreate(&start));
 		CUDA_CALL(cudaEventCreate(&stop));
 
-		CUDA_CALL(cudaEventRecord(start, 0));
+		CUDA_CALL(cudaEventRecord(start));
 
 		//data from host to device
 		CUDA_CALL(cudaMemcpy(dev_data, this->data, this->fullSize, cudaMemcpyHostToDevice));
 
-		transform <<<blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+		transform << < blocksPerGrid, threadsPerBlock >> > (dev_data, dev_result);
 
 		//result from device to host
 		CUDA_CALL(cudaMemcpy(result.data, dev_result, this->fullSize, cudaMemcpyDeviceToHost));
 
-		CUDA_CALL(cudaEventRecord(stop, 0));
+		CUDA_CALL(cudaEventRecord(stop));
 		CUDA_CALL(cudaEventSynchronize(stop));
 
 		float elapsedTime;
 		CUDA_CALL(cudaEventElapsedTime(&elapsedTime, start, stop));
 
-		cout << "Cuda transform elapsed time: " << elapsedTime << " ms";
+		cout << "Cuda transform elapsed time: " << (int)elapsedTime << " ms" << endl;
 
 		CUDA_CALL(cudaEventDestroy(start));
 		CUDA_CALL(cudaEventDestroy(stop));
@@ -165,35 +190,25 @@ public:
 
 };
 
-__global__ void transform(char* data, char* result) {
-
-	char* window = data + (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-	char* rWindow = result + blockIdx.x * blockDim.x * 4 + threadIdx.x;
-
-	for (int i = 0; i < 4; i++) {
-	
-		*rWindow = *window;
-		window++;
-		rWindow += blockDim.x * 4;
-	}
-
-}
+#define HEIGHT 2000
+#define WIDTH_AMP 1000
 
 int main() {
 
-	Matrix a(2, 8);
+	Matrix a(HEIGHT, WIDTH_AMP * 4);
 
-	a.fill();
-
-	cout << a << endl << endl;
+	a.cudaFill();
 
 	try {
-	
-		Matrix b = a.cpuTransform();
-		cout << b;
+
+		Matrix b = a.cudaTransform();
+		Matrix c = a.cpuTransform();
+		if (b == c)
+			cout << "vse ok";
+		else cout << "ne vse ok";
 	}
 	catch (Matrix::sizeEx) {
-	
+
 		cout << "Incorrect matrix size";
 	}
 
