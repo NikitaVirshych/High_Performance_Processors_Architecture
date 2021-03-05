@@ -187,6 +187,21 @@ public:
 
 		return result;
 	}
+	
+	void printSubmatrix(int x0, int y0, int x1, int y1) const {
+
+		if(x0 > x1 || y0 > y1)
+			return;
+
+		if (x1 - x0 > this->width || y1 - y0 > this->height)
+			throw sizeEx();
+
+		for (int i = y0 - 1; i < y1; i++) {	
+			for (int j = x0 - 1; j < x1; j++) 
+				cout << this->data[j + i * this->width] << " ";
+			cout << endl;
+		}
+	}
 
 };
 
