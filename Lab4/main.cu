@@ -317,7 +317,7 @@ public:
 		float elapsedTime;
 		CUDA_CALL(cudaEventElapsedTime(&elapsedTime, start, stop));
 
-		cout << "Cuda transform2 elapsed time: " << (int)elapsedTime << " ms" << endl;
+		cout << "Cuda STransform elapsed time: " << (int)elapsedTime << " ms" << endl;
 
 		CUDA_CALL(cudaEventDestroy(start));
 		CUDA_CALL(cudaEventDestroy(stop));
