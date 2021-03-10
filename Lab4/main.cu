@@ -26,20 +26,36 @@ __device__ __constant__ int WIDTH;
 
 __global__ void transform2(char* data, char* result) {
 
+	result[blockIdx.y * WIDTH + ORDER[threadIdx.x % 4] * WIDTH / 4 + blockDim.x * blockIdx.x / 4 + threadIdx.x / 4] = data[blockIdx.y * WIDTH + blockIdx.x * blockDim.x + threadIdx.x];
+}
+
+__global__ void sharedTransform(char* data, char* result) {
+
 	__shared__ char* memory;
 
-	if (!threadIdx.x) {
-	
-		memory = (char*)malloc(blockDim.x);
-		memcpy(memory, data[blockIdx.y * WIDTH + blockIdx.x * blockDim.x], blockDim.x)
+	if (!threadIdx.x) {		
+		memory = (char*)malloc(WIDTH);
 	}
 
 	__syncthreads();
-	result[blockIdx.y * WIDTH + ORDER[threadIdx.x % 4] * WIDTH / 4 + blockDim.x * blockIdx.x / 4 + threadIdx.x / 4] = memory[threadIdx.x];
+
+	for (int i = 0; i < gridDim.x; i++) {
+
+		memory[ORDER[threadIdx.x % 4] * WIDTH / 4 + blockDim.x * i / 4 + threadIdx.x / 4] = data[blockIdx.x * WIDTH + i * blockDim.x + threadIdx.x];
+	}
+
 	__syncthreads();
 
-	if (!threadIdx.x) {
 
+	for (int i = 0; i < gridDim.x; i++) {
+
+		result[blockIdx.x * WIDTH + i * blockDim.x  + threadIdx.x] = memory[i * blockDim.x + threadIdx.x];
+	}
+	
+	__syncthreads();
+	
+	if (!threadIdx.x) {
+	
 		free(memory);
 	}
 }
@@ -261,6 +277,56 @@ public:
 
 		return result;
 	}
+
+	Matrix cudaSharedTransform() const {
+
+		if (this->width % 128)
+			throw sizeEx();
+
+		Matrix result(this->height * 4, this->width / 4);
+
+		char* dev_data;
+		char* dev_result;
+
+		CUDA_CALL(cudaMalloc(&dev_data, this->fullSize));
+		CUDA_CALL(cudaMalloc(&dev_result, result.fullSize));
+
+		dim3 threadsPerBlock = dim3(128);
+		dim3 blocksPerGrid = dim3(this->height);
+
+		cudaEvent_t start, stop;
+		CUDA_CALL(cudaEventCreate(&start));
+		CUDA_CALL(cudaEventCreate(&stop));
+
+		CUDA_CALL(cudaEventRecord(start));
+
+		//data from host to device
+		CUDA_CALL(cudaMemcpy(dev_data, this->data, this->fullSize, cudaMemcpyHostToDevice));
+		CUDA_CALL(cudaMemcpyToSymbol(WIDTH, this->width, sizeof(int));
+		int order[] = { 3, 1, 0, 2 };
+		CUDA_CALL(cudaMemcpyToSymbol(ORDER, order, sizeof(int)*4);
+		
+		sharedTransform <<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+
+		//result from device to host
+		CUDA_CALL(cudaMemcpy(result.data, dev_result, this->fullSize, cudaMemcpyDeviceToHost));
+
+		CUDA_CALL(cudaEventRecord(stop));
+		CUDA_CALL(cudaEventSynchronize(stop));
+
+		float elapsedTime;
+		CUDA_CALL(cudaEventElapsedTime(&elapsedTime, start, stop));
+
+		cout << "Cuda transform2 elapsed time: " << (int)elapsedTime << " ms" << endl;
+
+		CUDA_CALL(cudaEventDestroy(start));
+		CUDA_CALL(cudaEventDestroy(stop));
+
+		CUDA_CALL(cudaFree(dev_data));
+		CUDA_CALL(cudaFree(dev_result));
+
+		return result;
+	}
 	
 	void printSubmatrix(int x0, int y0, int x1, int y1) const {
 
@@ -279,8 +345,8 @@ public:
 
 };
 
-#define HEIGHT 2000
-#define WIDTH_AMP 100
+#define HEIGHT 50000
+#define WIDTH_AMP 8
 
 int main() {
 
@@ -289,10 +355,11 @@ int main() {
 	a.cudaFill();
 
 	try {
+		Matrix b = a.cudaTransform();
+		Matrix c = a.cudaTransform2();
+		Matrix d = a.cudaSharedTransform();
 
-		Matrix b = a.cudaTransform2();
-		Matrix c = a.cpuTransform();
-		if (b == c)
+		if (b == c || b == d)
 			cout << "vse ok";
 		else cout << "ne vse ok";
 	}
