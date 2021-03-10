@@ -39,7 +39,7 @@ __global__ void sharedTransform(char* data, char* result) {
 
 	__syncthreads();
 
-	for (int i = 0; i < gridDim.x; i++) {
+	for (int i = 0; i < WIDTH / blockDim.x; i++) {
 
 		memory[ORDER[threadIdx.x % 4] * WIDTH / 4 + blockDim.x * i / 4 + threadIdx.x / 4] = data[blockIdx.x * WIDTH + i * blockDim.x + threadIdx.x];
 	}
@@ -47,17 +47,18 @@ __global__ void sharedTransform(char* data, char* result) {
 	__syncthreads();
 
 
-	for (int i = 0; i < gridDim.x; i++) {
+	for (int i = 0; i < WIDTH / blockDim.x; i++) {
 
 		result[blockIdx.x * WIDTH + i * blockDim.x  + threadIdx.x] = memory[i * blockDim.x + threadIdx.x];
 	}
-	
+
 	__syncthreads();
 	
 	if (!threadIdx.x) {
 	
 		free(memory);
 	}
+
 }
 
 inline
