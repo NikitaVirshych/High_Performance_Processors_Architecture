@@ -1,6 +1,27 @@
 ﻿
+/*#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+//for __syncthreads()
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+#include <cuda_runtime_api.h>
+
+#include <stdio.h>
+#include <windows.h>
+#include <iostream>
+#include <cuda.h>
+#include <curand.h>*/
+
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+
+//for __syncthreads()
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+#include <cuda_runtime_api.h>
 
 #include <stdio.h>
 #include <windows.h>
@@ -33,7 +54,7 @@ __global__ void sharedTransform(char* data, char* result) {
 
 	__shared__ char* memory;
 
-	if (!threadIdx.x) {		
+	if (!threadIdx.x) {
 		memory = (char*)malloc(WIDTH);
 	}
 
@@ -49,13 +70,13 @@ __global__ void sharedTransform(char* data, char* result) {
 
 	for (int i = 0; i < WIDTH / blockDim.x; i++) {
 
-		result[blockIdx.x * WIDTH + i * blockDim.x  + threadIdx.x] = memory[i * blockDim.x + threadIdx.x];
+		result[blockIdx.x * WIDTH + i * blockDim.x + threadIdx.x] = memory[i * blockDim.x + threadIdx.x];
 	}
 
 	__syncthreads();
-	
+
 	if (!threadIdx.x) {
-	
+
 		free(memory);
 	}
 
@@ -112,7 +133,7 @@ public:
 		for (int i = 0; i < fullSize; i++)
 			this->data[i] = '0' + rand() % 10;
 	}
-	
+
 	void cudaFill() {
 
 		curandGenerator_t gen;
@@ -130,7 +151,7 @@ public:
 
 		CUDA_CALL(cudaFree(devData));
 	}
-	
+
 	friend std::ostream& operator<<(std::ostream& outStream, const Matrix& obj) {
 
 		for (int i = 0; i < obj.height; i++) {
@@ -242,7 +263,7 @@ public:
 		CUDA_CALL(cudaMalloc(&dev_result, result.fullSize));
 
 		dim3 threadsPerBlock = dim3(128);
-		dim3 blocksPerGrid = dim3(this->width/128, this->height);
+		dim3 blocksPerGrid = dim3(this->width / 128, this->height);
 
 		cudaEvent_t start, stop;
 		CUDA_CALL(cudaEventCreate(&start));
@@ -252,12 +273,12 @@ public:
 
 		//data from host to device
 		CUDA_CALL(cudaMemcpy(dev_data, this->data, this->fullSize, cudaMemcpyHostToDevice));
-		CUDA_CALL(cudaMemcpyToSymbol(WIDTH, this->width, sizeof(int));
+		CUDA_CALL(cudaMemcpyToSymbol(WIDTH, &this->width, sizeof(int)));
 		int order[] = { 3, 1, 0, 2 };
-		CUDA_CALL(cudaMemcpyToSymbol(ORDER, order, sizeof(int)*4);
-		
+		CUDA_CALL(cudaMemcpyToSymbol(ORDER, order, sizeof(int) * 4));
 
-		transform2 <<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+
+		transform2 << < blocksPerGrid, threadsPerBlock >> > (dev_data, dev_result);
 
 		//result from device to host
 		CUDA_CALL(cudaMemcpy(result.data, dev_result, this->fullSize, cudaMemcpyDeviceToHost));
@@ -303,11 +324,11 @@ public:
 
 		//data from host to device
 		CUDA_CALL(cudaMemcpy(dev_data, this->data, this->fullSize, cudaMemcpyHostToDevice));
-		CUDA_CALL(cudaMemcpyToSymbol(WIDTH, this->width, sizeof(int));
+		CUDA_CALL(cudaMemcpyToSymbol(WIDTH, &this->width, sizeof(int)));
 		int order[] = { 3, 1, 0, 2 };
-		CUDA_CALL(cudaMemcpyToSymbol(ORDER, order, sizeof(int)*4);
-		
-		sharedTransform <<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+		CUDA_CALL(cudaMemcpyToSymbol(ORDER, order, sizeof(int) * 4));
+
+		sharedTransform << < blocksPerGrid, threadsPerBlock >> > (dev_data, dev_result);
 
 		//result from device to host
 		CUDA_CALL(cudaMemcpy(result.data, dev_result, this->fullSize, cudaMemcpyDeviceToHost));
@@ -328,17 +349,17 @@ public:
 
 		return result;
 	}
-	
+
 	void printSubmatrix(int x0, int y0, int x1, int y1) const {
 
-		if(x0 > x1 || y0 > y1)
+		if (x0 > x1 || y0 > y1)
 			return;
 
 		if (x1 - x0 > this->width || y1 - y0 > this->height)
 			throw sizeEx();
 
-		for (int i = y0 - 1; i < y1; i++) {	
-			for (int j = x0 - 1; j < x1; j++) 
+		for (int i = y0 - 1; i < y1; i++) {
+			for (int j = x0 - 1; j < x1; j++)
 				cout << this->data[j + i * this->width] << " ";
 			cout << endl;
 		}
@@ -358,11 +379,13 @@ int main() {
 	try {
 		Matrix b = a.cudaTransform();
 		Matrix c = a.cudaTransform2();
-		Matrix d = a.cudaSharedTransform();
+		Matrix d = a.cpuTransform();
+		Matrix e = a.cudaSharedTransform();
 
-		if (b == c || b == d)
-			cout << "vse ok";
-		else cout << "ne vse ok";
+
+		//if (b == c && b == d && b == e)
+		//	cout << "vse ok";
+		//else cout << "ne vse ok";
 	}
 	catch (Matrix::sizeEx) {
 
