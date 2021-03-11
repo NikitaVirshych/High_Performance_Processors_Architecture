@@ -1,20 +1,4 @@
-﻿
-/*#include "cuda_runtime.h"
-#include "device_launch_parameters.h"
-
-//for __syncthreads()
-#ifndef __CUDACC__ 
-#define __CUDACC__
-#endif
-#include <cuda_runtime_api.h>
-
-#include <stdio.h>
-#include <windows.h>
-#include <iostream>
-#include <cuda.h>
-#include <curand.h>*/
-
-#include "cuda_runtime.h"
+﻿#include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
 //for __syncthreads()
@@ -29,29 +13,17 @@
 #include <cuda.h>
 #include <curand.h>
 
-__global__ void transform(char* data, char* result) {
-
-	char* window = data + (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-	char* rWindow = result + blockIdx.x * blockDim.x * 4 + threadIdx.x;
-
-	rWindow[0] = window[2];
-	rWindow[blockDim.x] = window[1];
-	rWindow[blockDim.x * 2] = window[3];
-	rWindow[blockDim.x * 3] = window[0];
-
-
-}
-
 __device__ __constant__ int ORDER[4];
 __device__ __constant__ int WIDTH;
 
-__global__ void transform2(char* data, char* result) {
+__global__ void transform(char* data, char* result) {
 
 	result[blockIdx.y * WIDTH + ORDER[threadIdx.x % 4] * WIDTH / 4 + blockDim.x * blockIdx.x / 4 + threadIdx.x / 4] = data[blockIdx.y * WIDTH + blockIdx.x * blockDim.x + threadIdx.x];
 }
 
 __global__ void sharedTransform(char* data, char* result) {
 
+	const int order[] = { 3, 1, 0, 2 };
 	__shared__ char* memory;
 
 	if (!threadIdx.x) {
@@ -62,7 +34,7 @@ __global__ void sharedTransform(char* data, char* result) {
 
 	for (int i = 0; i < WIDTH / blockDim.x; i++) {
 
-		memory[ORDER[threadIdx.x % 4] * WIDTH / 4 + blockDim.x * i / 4 + threadIdx.x / 4] = data[blockIdx.x * WIDTH + i * blockDim.x + threadIdx.x];
+		memory[order[threadIdx.x % 4] * WIDTH / 4 + blockDim.x * i / 4 + threadIdx.x / 4] = data[blockIdx.x * WIDTH + i * blockDim.x + threadIdx.x];
 	}
 
 	__syncthreads();
@@ -204,53 +176,6 @@ public:
 
 	Matrix cudaTransform() const {
 
-		if (this->width % 4)
-			throw sizeEx();
-
-		Matrix result(this->height * 4, this->width / 4);
-
-		char* dev_data;
-		char* dev_result;
-
-		CUDA_CALL(cudaMalloc(&dev_data, this->fullSize));
-		CUDA_CALL(cudaMalloc(&dev_result, result.fullSize));
-
-		dim3 threadsPerBlock = dim3(result.width);
-		dim3 blocksPerGrid = dim3(this->height);
-
-		cudaEvent_t start, stop;
-		CUDA_CALL(cudaEventCreate(&start));
-		CUDA_CALL(cudaEventCreate(&stop));
-
-		CUDA_CALL(cudaEventRecord(start));
-
-		//data from host to device
-		CUDA_CALL(cudaMemcpy(dev_data, this->data, this->fullSize, cudaMemcpyHostToDevice));
-
-		transform << < blocksPerGrid, threadsPerBlock >> > (dev_data, dev_result);
-
-		//result from device to host
-		CUDA_CALL(cudaMemcpy(result.data, dev_result, this->fullSize, cudaMemcpyDeviceToHost));
-
-		CUDA_CALL(cudaEventRecord(stop));
-		CUDA_CALL(cudaEventSynchronize(stop));
-
-		float elapsedTime;
-		CUDA_CALL(cudaEventElapsedTime(&elapsedTime, start, stop));
-
-		cout << "Cuda transform elapsed time: " << (int)elapsedTime << " ms" << endl;
-
-		CUDA_CALL(cudaEventDestroy(start));
-		CUDA_CALL(cudaEventDestroy(stop));
-
-		CUDA_CALL(cudaFree(dev_data));
-		CUDA_CALL(cudaFree(dev_result));
-
-		return result;
-	}
-
-	Matrix cudaTransform2() const {
-
 		if (this->width % 128)
 			throw sizeEx();
 
@@ -278,7 +203,7 @@ public:
 		CUDA_CALL(cudaMemcpyToSymbol(ORDER, order, sizeof(int) * 4));
 
 
-		transform2 << < blocksPerGrid, threadsPerBlock >> > (dev_data, dev_result);
+		transform << < blocksPerGrid, threadsPerBlock >> > (dev_data, dev_result);
 
 		//result from device to host
 		CUDA_CALL(cudaMemcpy(result.data, dev_result, this->fullSize, cudaMemcpyDeviceToHost));
@@ -325,8 +250,6 @@ public:
 		//data from host to device
 		CUDA_CALL(cudaMemcpy(dev_data, this->data, this->fullSize, cudaMemcpyHostToDevice));
 		CUDA_CALL(cudaMemcpyToSymbol(WIDTH, &this->width, sizeof(int)));
-		int order[] = { 3, 1, 0, 2 };
-		CUDA_CALL(cudaMemcpyToSymbol(ORDER, order, sizeof(int) * 4));
 
 		sharedTransform << < blocksPerGrid, threadsPerBlock >> > (dev_data, dev_result);
 
@@ -368,7 +291,7 @@ public:
 };
 
 #define HEIGHT 50000
-#define WIDTH_AMP 8
+#define WIDTH_AMP 1000
 
 int main() {
 
@@ -377,13 +300,12 @@ int main() {
 	a.cudaFill();
 
 	try {
-		Matrix b = a.cudaTransform();
-		Matrix c = a.cudaTransform2();
-		Matrix d = a.cpuTransform();
-		Matrix e = a.cudaSharedTransform();
+		Matrix b = a.cpuTransform();
+		Matrix c = a.cudaTransform();
+		Matrix d = a.cudaSharedTransform();
 
 
-		//if (b == c && b == d && b == e)
+		//if (b == c && b == d)
 		//	cout << "vse ok";
 		//else cout << "ne vse ok";
 	}
