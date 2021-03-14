@@ -54,6 +54,23 @@ __global__ void sharedTransform(char* data, char* result) {
 
 }
 
+__global__ void testTransform(int* data, int* result) {
+
+	__shared__ char memory[4][128];
+	char buffer[4];
+
+	*(int*)buffer = data[blockIdx.y * WIDTH + blockIdx.x * WIDTH / 512 + threadIdx.y * 128 + threadIdx.x];
+
+	memory[0][32 * threadIdx.y + threadIdx.x] = buffer[2];
+	memory[1][32 * threadIdx.y + threadIdx.x] = buffer[1];
+	memory[2][32 * threadIdx.y + threadIdx.x] = buffer[3];
+	memory[3][32 * threadIdx.y + threadIdx.x] = buffer[0];
+
+	__syncthreads();
+
+	result[blockIdx.y * WIDTH + blockIdx.x * WIDTH / 512 + threadIdx.y * 128 + threadIdx.x] = *(int*)memory[threadIdx.y][4*threadIdx.x];
+}
+
 inline
 cudaError_t CUDA_CALL(cudaError_t result)
 {
@@ -273,6 +290,54 @@ public:
 		return result;
 	}
 
+	Matrix cudaTestTransform() const {
+
+		if (this->width % 128)
+			throw sizeEx();
+
+		Matrix result(this->height * 4, this->width / 4);
+
+		int* dev_data;
+		int* dev_result;
+
+		CUDA_CALL(cudaMalloc(&dev_data, this->fullSize));
+		CUDA_CALL(cudaMalloc(&dev_result, result.fullSize));
+
+		dim3 threadsPerBlock = dim3(32, 4);
+		dim3 blocksPerGrid = dim3(this->width / 512, this->height);
+
+		cudaEvent_t start, stop;
+		CUDA_CALL(cudaEventCreate(&start));
+		CUDA_CALL(cudaEventCreate(&stop));
+
+		CUDA_CALL(cudaEventRecord(start));
+
+		//data from host to device
+		CUDA_CALL(cudaMemcpy(dev_data, this->data, this->fullSize, cudaMemcpyHostToDevice));
+		CUDA_CALL(cudaMemcpyToSymbol(WIDTH, &this->width, sizeof(int)));
+
+		testTransform << < blocksPerGrid, threadsPerBlock >> > (dev_data, dev_result);
+
+		//result from device to host
+		CUDA_CALL(cudaMemcpy(result.data, dev_result, this->fullSize, cudaMemcpyDeviceToHost));
+
+		CUDA_CALL(cudaEventRecord(stop));
+		CUDA_CALL(cudaEventSynchronize(stop));
+
+		float elapsedTime;
+		CUDA_CALL(cudaEventElapsedTime(&elapsedTime, start, stop));
+
+		cout << "Cuda STransform elapsed time: " << (int)elapsedTime << " ms" << endl;
+
+		CUDA_CALL(cudaEventDestroy(start));
+		CUDA_CALL(cudaEventDestroy(stop));
+
+		CUDA_CALL(cudaFree(dev_data));
+		CUDA_CALL(cudaFree(dev_result));
+
+		return result;
+	}
+
 	void printSubmatrix(int x0, int y0, int x1, int y1) const {
 
 		if (x0 > x1 || y0 > y1)
@@ -303,11 +368,12 @@ int main() {
 		Matrix b = a.cpuTransform();
 		Matrix c = a.cudaTransform();
 		Matrix d = a.cudaSharedTransform();
+		Matrix e = a.cudaTestTransform();
 
 
-		//if (b == c && b == d)
-		//	cout << "vse ok";
-		//else cout << "ne vse ok";
+		if (e == b && b == c && b == d)
+			cout << "vse ok";
+		else cout << "ne vse ok";
 	}
 	catch (Matrix::sizeEx) {
 
