@@ -28,10 +28,10 @@ __global__ void sharedTransform(int* data, int* result) {
 
 	*(int*)buffer = data[blockIdx.y * WIDTH + blockIdx.x * WIDTH / gridDim.x + threadIdx.y * blockDim.x + threadIdx.x];
 
-	memory[0][32 * threadIdx.y + threadIdx.x] = buffer[2];
-	memory[1][32 * threadIdx.y + threadIdx.x] = buffer[1];
-	memory[2][32 * threadIdx.y + threadIdx.x] = buffer[3];
 	memory[3][32 * threadIdx.y + threadIdx.x] = buffer[0];
+	memory[1][32 * threadIdx.y + threadIdx.x] = buffer[1];
+	memory[0][32 * threadIdx.y + threadIdx.x] = buffer[2];
+	memory[2][32 * threadIdx.y + threadIdx.x] = buffer[3];
 
 	__syncthreads();
 
@@ -260,6 +260,136 @@ public:
 		return result;
 	}
 
+	Matrix cudaPinnedTransform() const {
+
+		if (this->width % 512)
+			throw sizeEx();
+
+		CUDA_CALL(cudaHostRegister(this->data, this->fullSize, cudaHostRegisterDefault));
+
+		Matrix result(this->height * 4, this->width / 4);
+
+		int* dev_data;
+		int* dev_result;
+
+		CUDA_CALL(cudaMalloc(&dev_data, this->fullSize));
+		CUDA_CALL(cudaMalloc(&dev_result, result.fullSize));
+
+		int intWidth = this->width / sizeof(int);
+		int warps = 4;
+
+		dim3 threadsPerBlock = dim3(32, warps);
+		dim3 blocksPerGrid = dim3(intWidth / (32 * warps), this->height);
+
+		cudaEvent_t start, stop;
+		CUDA_CALL(cudaEventCreate(&start));
+		CUDA_CALL(cudaEventCreate(&stop));
+
+		CUDA_CALL(cudaEventRecord(start));
+
+		//data from host to device
+		CUDA_CALL(cudaMemcpy(dev_data, this->data, this->fullSize, cudaMemcpyHostToDevice));
+		CUDA_CALL(cudaMemcpyToSymbol(WIDTH, &intWidth, sizeof(int)));
+
+		sharedTransform <<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+
+		//result from device to host
+		CUDA_CALL(cudaMemcpy(result.data, dev_result, this->fullSize, cudaMemcpyDeviceToHost));
+
+		CUDA_CALL(cudaEventRecord(stop));
+		CUDA_CALL(cudaEventSynchronize(stop));
+
+		float elapsedTime;
+		CUDA_CALL(cudaEventElapsedTime(&elapsedTime, start, stop));
+
+		cout << "Cuda STransform elapsed time: " << (int)elapsedTime << " ms" << endl;
+
+		CUDA_CALL(cudaEventDestroy(start));
+		CUDA_CALL(cudaEventDestroy(stop));
+
+		CUDA_CALL(cudaFree(dev_data));
+		CUDA_CALL(cudaFree(dev_result));
+
+		return result;
+	}
+
+	Matrix cudaBigTransform() const {
+
+		if (this->width % 512)
+			throw sizeEx();
+
+		Matrix result(this->height * 4, this->width / 4);
+		int* dev_data;
+		int* dev_result;
+		int* pinned;
+
+		int intWidth = this->width / sizeof(int);
+		int warps = 4;
+		dim3 threadsPerBlock = dim3(32, warps);
+		dim3 blocksPerGrid;
+
+		cudaEvent_t start, stop;
+		CUDA_CALL(cudaEventCreate(&start));
+		CUDA_CALL(cudaEventCreate(&stop));
+		float fullTime, elapsedTime;
+
+		size_t freeMem;
+		int rows, offset = 0, rowsComplete = 0;
+
+		while(rowsComplete < this->height){
+
+			CUDA_CALL(cudaMemGetInfo(&freeMem, nullptr));
+			rows = freeMem / this->width;
+		
+			if(rows > this->height - rowsComplete)
+				rows = this->height - rowsComplete;
+
+			dim3 blocksPerGrid = dim3(intWidth / (32 * warps), rows);
+
+			CUDA_CALL(cudaMalloc(&dev_data, rows * this->width));
+			CUDA_CALL(cudaMalloc(&dev_result, rows * this->width));
+
+			CUDA_CALL(cudaMallocHost(&pinned, rows * this->width));
+
+			CUDA_CALL(cudaEventRecord(start));
+
+			CUDA_CALL(cudaMemcpy(pinned, this->data + offset, rows * this->width, cudaMemcpyHostToHost));
+
+			//data from host to device
+			CUDA_CALL(cudaMemcpy(dev_data, pinned, rows * this->width, cudaMemcpyHostToDevice));
+			
+			intWidth = rows * this->width / sizeof(int);
+			CUDA_CALL(cudaMemcpyToSymbol(WIDTH, &intWidth, sizeof(int)));
+	
+			sharedTransform <<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+
+			//result from device to host
+			CUDA_CALL(cudaMemcpy(pinned, dev_result, rows * this->width, cudaMemcpyDeviceToHost));
+
+			CUDA_CALL(cudaMemcpy(result.data + offset, pinned, rows * this->width, cudaMemcpyHostToHost));
+	
+			CUDA_CALL(cudaEventRecord(stop));
+			CUDA_CALL(cudaEventSynchronize(stop));
+
+			CUDA_CALL(cudaEventElapsedTime(&elapsedTime, start, stop));
+			fullTime += elapsedTime;
+
+			rowsComplete += rows;
+			offset += rows * this->width;
+
+			CUDA_CALL(cudaFree(dev_data));
+			CUDA_CALL(cudaFree(dev_result));
+			CUDA_CALL(cudaFree(pinned));
+		}	
+
+		cout << "Cuda BTransform elapsed time: " << (int)elapsedTime << " ms" << endl;	
+
+		CUDA_CALL(cudaEventDestroy(start));
+		CUDA_CALL(cudaEventDestroy(stop));
+
+		return result;
+	}
+
 	void printSubmatrix(int x0, int y0, int x1, int y1) const {
 
 		if (x0 > x1 || y0 > y1)
@@ -290,6 +420,7 @@ int main() {
 		Matrix b = a.cpuTransform();
 		Matrix c = a.cudaTransform();
 		Matrix d = a.cudaSharedTransform();
+		Matrix e = a.cudaPinnedTransform();
 
 
 		if (d == b && b == c)
