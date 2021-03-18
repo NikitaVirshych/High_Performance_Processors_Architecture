@@ -344,6 +344,8 @@ public:
 			if(rows > this->height - rowsComplete)
 				rows = this->height - rowsComplete;
 
+			cout << "Processing " << rows << " rows" << endl;
+
 			dim3 blocksPerGrid = dim3(intWidth / (32 * warps), rows);
 
 			CUDA_CALL(cudaMalloc(&dev_data, rows * this->width));
@@ -376,6 +378,8 @@ public:
 
 			rowsComplete += rows;
 			offset += rows * this->width;
+
+			cout << rowsComplete << " rows out of " << this->height << " processed" << endl;
 
 			CUDA_CALL(cudaFree(dev_data));
 			CUDA_CALL(cudaFree(dev_result));
