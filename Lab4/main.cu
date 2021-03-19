@@ -360,7 +360,6 @@ public:
 			//data from host to device
 			CUDA_CALL(cudaMemcpy(dev_data, pinned, rows * this->width, cudaMemcpyHostToDevice));
 			
-			intWidth = rows * this->width / sizeof(int);
 			CUDA_CALL(cudaMemcpyToSymbol(WIDTH, &intWidth, sizeof(int)));
 	
 			sharedTransform <<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
