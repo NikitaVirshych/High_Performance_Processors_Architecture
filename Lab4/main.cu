@@ -125,7 +125,8 @@ public:
 			return FALSE;
 
 		for (int i = 0; i < this->height; i++)
-			if (memcmp(this->data, obj.data, fullSize))
+			for (int j = 0; j < this->width; i++)
+			if (this->data[i * this->width + j] != obj.data[i * this->width + j])
 				return FALSE;
 
 		return TRUE;
