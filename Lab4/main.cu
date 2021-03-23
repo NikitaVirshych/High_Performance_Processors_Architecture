@@ -342,6 +342,9 @@ public:
 			CUDA_CALL(cudaMemGetInfo(&freeMem, nullptr));
 			rows = freeMem / this->width;
 
+			if (rows > 65535)
+				rows = 65535;
+
 			if (rows > this->height - rowsComplete)
 				rows = this->height - rowsComplete;
 
@@ -411,26 +414,31 @@ public:
 
 };
 
-#define HEIGHT 10000
-#define WIDTH_AMP 100
+#define HEIGHT 70000
+#define WIDTH_AMP 1
 
 int main() {
 
 	Matrix a(HEIGHT, WIDTH_AMP * 512);
 
-	a.fill();
+	a.cudaFill();
 
 	try {
+		/*
 		Matrix b = a.cpuTransform();
 		Matrix c = a.cudaTransform();
 		Matrix d = a.cudaSharedTransform();
 		Matrix e = a.cudaPinnedTransform();
 
 
-		if (d == b && b == c)
+		if (b == c && b == d && b == e)
 			cout << "all matrices are equal";
 		else
 			cout << "error";
+		*/
+
+		Matrix b = a.cudaBigTransform();
+
 	}
 	catch (Matrix::sizeEx) {
 
