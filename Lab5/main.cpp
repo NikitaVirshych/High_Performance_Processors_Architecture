@@ -1,26 +1,5 @@
-﻿#define _CRT_SECURE_NO_WARNINGS
-#include <windows.h>
-#include <iostream>
-#include <iomanip>
-#include <stdio.h>
-#include <fstream>
-//#include "device_launch_parameters.h"
-//#include "cuda_runtime.h"
-//#include <cuda_runtime_api.h>
-//#include <cuda.h>
-//
-////for __syncthreads()
-//#ifndef __CUDACC__ 
-//#define __CUDACC__
-//#endif
-//
-//inline
-//cudaError_t CUDA_CALL(cudaError_t result)
-//{
-//	if (result != cudaSuccess)
-//		std::cerr << "CUDA Runtime Error: " << cudaGetErrorString(result) << std::endl;
-//	return result;
-//}
+﻿#include "Header.h"
+#include "kernel.cu"
 
 using namespace std;
 typedef unsigned char uchar;
@@ -285,8 +264,50 @@ public:
 		return result;
 	}
 
-	Image cudaConvolute() const 
+	Image cudaConvolute() 
 	{
+
+		Image result(*this);
+
+		this->createPad();
+
+		dim3 threadsPerBlock = dim3(32, 32);
+		dim3 blocksPerGrid = dim3(this.height / 31);
+		int lastBlockRows = 32;
+
+		if (this.height % 31) 
+		{		
+			lastBlockRows = this.height % 30;
+			blocksPerGrid = dim3((this.height / 31) + 1)
+		}
+
+		int pitch = this->width / 128;
+		if (this->width % 128)
+			pitch += 1;
+		pitch *= 128;
+
+		int* dev_data;
+		int* dev_result;
+
+		cudaMalloc(&dev_data, pitch * this->height);
+		cudaMalloc(&dev_result, pitch * result.height);
+
+		cudaMemcpy2D(dev_data, pitch, this->data, this->width, this->width, this->height, cudaMemcpyHostToDevice);
+
+		int channels = this->channels;
+		cudaMemcpyToSymbol(CHANNELS, &channels, sizeof(int));
+		cudaMemcpyToSymbol(LAST_ROWS, &lastBlockRows, sizeof(int));
+		cudaMemcpyToSymbol(PITCH, &pitch, sizeof(int));
+		int transactions = pitch / 128;
+		cudaMemcpyToSymbol(TRANSACTIONS, &transactions, sizeof(int));
+
+		convolution <<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+
+		cudaMemcpy2D(result.data, result.width, dev_result, pitch, result.width, result.height, cudaMemcpyDeviceToHost);
+
+		this->removePad();
+
+		return result;
 
 	}
 
