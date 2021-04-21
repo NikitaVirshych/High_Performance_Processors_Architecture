@@ -1,5 +1,110 @@
-﻿#include "Header.h"
-#include "kernel.cu"
+﻿#define _CRT_SECURE_NO_WARNINGS
+#include <windows.h>
+#include <iostream>
+#include <iomanip>
+#include <stdio.h>
+#include <fstream>
+#include "device_launch_parameters.h"
+#include "cuda_runtime.h"
+#include <cuda_runtime_api.h>
+#include <cuda.h>
+
+//for __syncthreads()
+#ifndef __CUDACC__ 
+#define __CUDACC__
+#endif
+
+inline
+cudaError_t CUDA_CALL(cudaError_t result)
+{
+	if (result != cudaSuccess)
+		std::cerr << "CUDA Runtime Error: " << cudaGetErrorString(result) << std::endl;
+	return result;
+}
+
+__device__ __constant__ int CHANNELS;
+__device__ __constant__ int LAST_ROWS;
+__device__ __constant__ int PITCH;
+__device__ __constant__ int TRANSACTIONS;
+
+__global__ void convolution(int* data, int* result) 
+{
+	int rows = blockDim.y;
+
+	if(blockIdx.x == gridDim.x)
+		rows = LAST_ROWS;
+
+	__shared__ unsigned char localData[32][256];
+	unsigned char localResult[4];
+	int tmp;
+
+	if(threadIdx.y < rows)
+	{
+		*(int*)(localData[threadIdx.y] + 4 * threadIdx.x) = data[PITCH*30*blockIdx.x + PITCH * threadIdx.y + threadIdx.x];
+
+		for(int i = 1; i < TRANSACTIONS; i++)
+		{
+
+			__syncthreads();
+
+			//Новая транзакция
+			*(int*)(localData[threadIdx.y] + 128 + 4 * threadIdx.x) = data[PITCH*30*blockIdx.x + PITCH * threadIdx.y + 32 * i + threadIdx.x];
+	
+			__syncthreads();
+
+			if(threadIdx.y < rows - 2)
+			{
+				for(int j = 0; j < 4; j++)
+				{
+
+					tmp = 5 * localData[threadIdx.y + 1][CHANNELS + 4 * threadIdx.x + j] - localData[threadIdx.y][CHANNELS + 4 * threadIdx.x + j] - localData[threadIdx.y + 2][CHANNELS + 4 * threadIdx.x + j] - localData[threadIdx.y + 1][4 * threadIdx.x + j] - localData[threadIdx.y + 1][2 * CHANNELS + 4 * threadIdx.x + j];
+					
+					if (tmp > 255)
+						localResult[j] = 255;
+					else if (tmp < 0)
+						localResult[j] = 0;
+					else
+						localResult[j] = tmp;
+
+				}
+
+				result[PITCH*30*blockIdx.x + PITCH * threadIdx.y + 32 * (i-1) + threadIdx.x] = *(int*)localResult;
+			}
+
+			__syncthreads();
+
+			//Сдвиг в разделяемой памяти
+			*(int*)localResult = *(int*)(localData[threadIdx.y] + 128 + 4 * threadIdx.x);
+
+			__syncthreads();
+
+			*(int*)(localData[threadIdx.y] + 4 * threadIdx.x) = *(int*)localResult;
+
+		}
+
+		if(threadIdx.y < rows - 2)
+			{
+				for(int j = 0; j < 4; j++)
+				{
+
+					tmp = 5 * localData[threadIdx.y + 1][CHANNELS + 4 * threadIdx.x + j] - localData[threadIdx.y][CHANNELS + 4 * threadIdx.x + j] - localData[threadIdx.y + 2][CHANNELS + 4 * threadIdx.x + j] - localData[threadIdx.y + 1][4 * threadIdx.x + j] - localData[threadIdx.y + 1][2 * CHANNELS + 4 * threadIdx.x + j];
+					
+					if (tmp > 255)
+						localResult[j] = 255;
+					else if (tmp < 0)
+						localResult[j] = 0;
+					else
+						localResult[j] = tmp;
+
+				}
+				
+				__syncthreads();
+
+				result[PITCH*30*blockIdx.x + PITCH * threadIdx.y + 32 * (TRANSACTIONS-1) + threadIdx.x] = *(int*)localResult;
+			}
+		
+	}	
+}
 
 using namespace std;
 typedef unsigned char uchar;
@@ -76,9 +181,7 @@ public:
 
 	Image(uint height, uint width, uint channels) : height(height), width(width), channels(channels) 
 	{
-		this->width *= this->channels;
 		this->fullSize = this->width * this->height;
-
 		this->data = new uchar[fullSize];
 	}
 
@@ -225,7 +328,7 @@ public:
 		for (uint i = 0; i < this->height; i++)
 			for (uint j = 0; j < this->width; j++)
 				if (this->data[i * this->width + j] != obj.data[i * this->width + j])
-					return FALSE;
+					cout << "[" << i << "]" << "[" << j << "] difference  = " << this->data[i * this->width + j] - obj.data[i * this->width + j] << endl;
 
 		return TRUE;
 	}
@@ -240,6 +343,8 @@ public:
 		uchar* up = this->data + channels;
 		uchar* down = this->data + 2 * this->width + channels;
 		int tmp;
+
+		DWORD64 startTime = GetTickCount64();
 
 		for (uint i = 0; i < result.height; i++) 
 		{
@@ -259,6 +364,8 @@ public:
 			down += this->width;
 		}
 
+		cout << "CPU convolution elapsed time: " << GetTickCount64() - startTime << " ms" << endl;
+
 		this->removePad();
 
 		return result;
@@ -269,17 +376,17 @@ public:
 
 		Image result(*this);
 
-		this->createPad();
-
 		dim3 threadsPerBlock = dim3(32, 32);
-		dim3 blocksPerGrid = dim3(this.height / 31);
+		dim3 blocksPerGrid = dim3(this->height / 30);
 		int lastBlockRows = 32;
 
-		if (this.height % 31) 
-		{		
-			lastBlockRows = this.height % 30;
-			blocksPerGrid = dim3((this.height / 31) + 1)
+		if(this->height % 30)
+		{	
+			blocksPerGrid = dim3((this->height / 30) + 1);
+			lastBlockRows = (this->height % 30) + 2;
 		}
+
+		this->createPad();
 
 		int pitch = this->width / 128;
 		if (this->width % 128)
@@ -289,26 +396,40 @@ public:
 		int* dev_data;
 		int* dev_result;
 
-		cudaMalloc(&dev_data, pitch * this->height);
-		cudaMalloc(&dev_result, pitch * result.height);
+		CUDA_CALL(cudaMalloc(&dev_data, pitch * this->height));
+		CUDA_CALL(cudaMalloc(&dev_result, pitch * result.height));
 
-		cudaMemcpy2D(dev_data, pitch, this->data, this->width, this->width, this->height, cudaMemcpyHostToDevice);
+		CUDA_CALL(cudaMemcpy2D(dev_data, pitch, this->data, this->width, this->width, this->height, cudaMemcpyHostToDevice));
 
 		int channels = this->channels;
-		cudaMemcpyToSymbol(CHANNELS, &channels, sizeof(int));
-		cudaMemcpyToSymbol(LAST_ROWS, &lastBlockRows, sizeof(int));
-		cudaMemcpyToSymbol(PITCH, &pitch, sizeof(int));
+		CUDA_CALL(cudaMemcpyToSymbol(CHANNELS, &channels, sizeof(int)));
+		CUDA_CALL(cudaMemcpyToSymbol(LAST_ROWS, &lastBlockRows, sizeof(int)));
 		int transactions = pitch / 128;
-		cudaMemcpyToSymbol(TRANSACTIONS, &transactions, sizeof(int));
+		CUDA_CALL(cudaMemcpyToSymbol(TRANSACTIONS, &transactions, sizeof(int)));
+		pitch /= 4;
+		CUDA_CALL(cudaMemcpyToSymbol(PITCH, &pitch, sizeof(int)));
+		pitch *= 4;
 
-		convolution <<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+		cudaEvent_t start, stop;
+		CUDA_CALL(cudaEventCreate(&start));
+		CUDA_CALL(cudaEventCreate(&stop));
 
-		cudaMemcpy2D(result.data, result.width, dev_result, pitch, result.width, result.height, cudaMemcpyDeviceToHost);
+		CUDA_CALL(cudaEventRecord(start));
+
+		convolution<<< blocksPerGrid, threadsPerBlock >>> (dev_data, dev_result);
+
+		CUDA_CALL(cudaEventRecord(stop));
+		CUDA_CALL(cudaEventSynchronize(stop));
+
+		float elapsedTime;
+		CUDA_CALL(cudaEventElapsedTime(&elapsedTime, start, stop));
+		cout << "Cuda convolution elapsed time: " << (int)elapsedTime << " ms" << endl;
+		
+		CUDA_CALL(cudaMemcpy2D(result.data, result.width, dev_result, pitch, result.width, result.height, cudaMemcpyDeviceToHost));
 
 		this->removePad();
 
 		return result;
-
 	}
 
 };
@@ -317,13 +438,17 @@ int main() {
 
 	Image a;
 
-	if (a.load("kit.pgm"))
-		cout << "load successful" << endl;
+	a.load("data.ppm");
 
 	Image b = a.convolute();
+	Image c = a.cudaConvolute();
 
-	if (b.save("Noviy_kit.pgm"))
-		cout << "save successful";
+	if (b.save("result.ppm"))
+		cout << "save successful" << endl;
+	if (c.save("cuda_result.ppm"))
+		cout << "Cuda save successful" << endl;
+
+	b==c;
 
 	return 0;
 }
