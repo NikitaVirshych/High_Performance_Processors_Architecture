@@ -333,7 +333,7 @@ public:
 		return TRUE;
 	}
 
-	Image convolute() 
+	Image convolve() 
 	{
 		Image result(*this);
 
@@ -371,7 +371,7 @@ public:
 		return result;
 	}
 
-	Image cudaConvolute() 
+	Image cudaConvolve() 
 	{
 
 		Image result(*this);
@@ -440,8 +440,8 @@ int main() {
 
 	a.load("data.ppm");
 
-	Image b = a.convolute();
-	Image c = a.cudaConvolute();
+	Image b = a.convolve();
+	Image c = a.cudaConvolve();
 
 	if (b.save("result.ppm"))
 		cout << "save successful" << endl;
